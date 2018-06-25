@@ -1,6 +1,11 @@
 import gym,os,sys,subprocess,time
+from skimage.transform import resize
+from skimage.color import rgb2gray
 import tensorflow as tf
 import numpy as np
+
+def preprocess_frame(frame,shape):
+    return resize(rgb2gray(frame),shape)
 
 def preprocess_obs(obs_array):
     if len(obs_array) == 1:
@@ -13,18 +18,19 @@ def preprocess_obs(obs_array):
             return np.concatenate(obs_array,axis=-1)
 
 class RL_config(object):
+    shape_of_frame = (84,84)
     gamma = 0.99
     learning_rate = 0.00025
     replay_capacity = 1000000
-    replay_start_size = 500
+    replay_start_size = 10000
     num_recent_obs = 4
     action_repeat = 4
     steps_for_updating_q1 = 10000
     batch = 32
-    max_episodes = 100
-    max_steps = 1000
+    max_episodes = 1000
+    max_steps = 2000
     final_exploration_frame = 1000000
-    episodes_to_save = 20
+    episodes_to_save = 100
     steps_to_validate = 250000
     evaluation_trials = 30
 
@@ -35,13 +41,14 @@ class RL_model(object):
 
     def initialize_replay(self):
         cap = self.config.replay_start_size
+        shape_frame = self.config.shape_of_frame
         env = self.env
         replay = []
-        last_obs = env.reset()
+        last_obs = preprocess_frame(env.reset(),shape_frame)
         if self.config.num_recent_obs == 1:
             sequence = []
         else:
-            sequence = [np.zeros(last_obs.shape)]*(self.config.num_recent_obs-1)
+            sequence = [np.zeros(shape_frame)]*(self.config.num_recent_obs-1)
         sequence.append(last_obs)
         last_stack_obs = preprocess_obs(sequence)
         self.obs_shape = last_stack_obs.shape
@@ -52,12 +59,12 @@ class RL_model(object):
                 if step%self.config.action_repeat == 1:
                     action = env.action_space.sample()
                 obs,rew,done,_ = env.step(action)
-                sequence.append(obs)
+                sequence.append(preprocess_frame(obs,shape_frame))
                 curr_stack_obs = preprocess_obs(sequence[step:step+self.config.num_recent_obs])
                 replay.append((last_stack_obs,action,rew,curr_stack_obs,done))
                 if done:
-                    last_obs = env.reset()
-                    sequence = [np.zeros(last_obs.shape)]*(self.config.num_recent_obs-1)
+                    last_obs = preprocess_frame(env.reset(),shape_frame)
+                    sequence = [np.zeros(shape_frame)]*(self.config.num_recent_obs-1)
                     sequence.append(last_obs)
                     last_stack_obs = preprocess_obs(sequence)
                     average_steps.append(step)
@@ -65,13 +72,13 @@ class RL_model(object):
                 else:
                     last_stack_obs = curr_stack_obs
             else:
-                last_obs = env.reset()
-                sequence = [np.zeros(last_obs.shape)]*(self.config.num_recent_obs-1)
+                last_obs = preprocess_frame(env.reset(),shape_frame)
+                sequence = [np.zeros(shape_frame)]*(self.config.num_recent_obs-1)
                 sequence.append(last_obs)
                 last_stack_obs = preprocess_obs(sequence)
                 step = 0
             step+=1
-        average_steps = np.array(average_steps)
+        average_steps = np.array(average_steps).astype(float)
         print("Number of steps taken to finish the game: average-{}, std-{}.".format(np.mean(average_steps),np.std(average_steps)))
         replay = np.array(replay)
         perm = np.random.permutation(cap)
@@ -81,11 +88,10 @@ class RL_model(object):
         replay = np.concatenate([self.replay,np.array(new_samples)])
         size_replay = len(replay)
         if size_replay > self.config.replay_capacity:
-            self.replay = replay[(size_replay-self.config.replay_capacity):]
+            self.replay = self.replay[(size_replay-self.config.replay_capacity):]
 
     def sample_from_replay(self):
-        cap = len(self.replay)
-        idxes = np.random.randint(cap,size=self.config.batch)
+        idxes = np.random.randint(len(self.replay),size=self.config.batch)
         return self.replay[idxes]
 
 def main(save_dir,distant_dir,walltime):
@@ -201,6 +207,7 @@ def main(save_dir,distant_dir,walltime):
     train_op = tf.train.AdamOptimizer(learning_rate=rl_conf.learning_rate).minimize(reg_loss)
 
     variable_set = [w1,b1,w2,b2,w3,b3,w4,b4,wo,bo]
+    sys.exit()
     with tf.Session() as sess:
         saver = tf.train.Saver()
         if tf.train.checkpoint_exists(checkpoint):
@@ -224,7 +231,7 @@ def main(save_dir,distant_dir,walltime):
             total_rew  = 0.0
             average_q = 0.0
 
-            s0 = env.reset()
+            s0 = preprocess_frame(env.reset(),rl_conf.shape_of_frame)
             zero_pad = np.zeros(s0.shape)
             if rl_conf.num_recent_obs == 1:
                 sequence = []
@@ -265,7 +272,7 @@ def main(save_dir,distant_dir,walltime):
                         action = max_action
                 obs,rew,done,_ = env.step(action)
                 total_rew += rew
-                sequence.append(obs)
+                sequence.append(preprocess_frame(obs,rl_conf.shape_of_frame))
                 last_obs_input  = obs_input
                 obs_input = preprocess_obs(sequence[step:step+rl_conf.num_recent_obs])
                 rl_model.update_replay(np.array([(last_obs_input,action,rew,obs_input,done)]))
@@ -287,7 +294,7 @@ def main(save_dir,distant_dir,walltime):
                 epsilon = 0.05
                 first_actions = {}
                 for _ in np.arange(rl_conf.evaluation_trials):
-                    s0 = env.reset()
+                    s0 = preprocess_frame(env.reset(),rl_conf.shape_of_frame)
                     zero_pad = np.zeros(s0.shape)
                     if rl_conf.num_recent_obs == 1:
                         sequence = []
@@ -311,7 +318,7 @@ def main(save_dir,distant_dir,walltime):
                                 action = max_action
                         obs,rew,done,_ = env.step(action)
                         rew_eval += rew
-                        sequence.append(obs)
+                        sequence.append(preprocess_frame(obs,rl_conf.shape_of_frame))
                         last_obs_input  = obs_input
                         obs_input = preprocess_obs(sequence[step:step+rl_conf.num_recent_obs])
                         if done:
