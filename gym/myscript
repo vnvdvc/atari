@@ -1,0 +1,13 @@
+#PBS -l walltime=04:00:00
+#PBS -l nodes=1:ppn=14:gpus=1
+#PBS -N rl_dqn
+#PBS -o spaceinvader_dqn.out
+cd $PBS_O_WORKDIR
+cp deepmind_2015.py $TMPDIR
+cd $TMPDIR
+echo $PBS_WALLTIME
+module load python/3.6
+module load cuda
+source activate xx
+python deepmind_2015.py $TMPDIR/spaceinvader $PBS_O_WORKDIR $PBS_WALLTIME
+cp $TMPDIR/spaceinvader/* $PBS_O_WORKDIR/
