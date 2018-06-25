@@ -25,6 +25,8 @@ class RL_config(object):
     max_steps = 1000
     final_exploration_frame = 1000000
     episodes_to_save = 20
+    steps_to_validate = 250000
+    evaluation_trials = 30
 
 class RL_model(object):
     def __init__(self,env,config):
@@ -219,7 +221,7 @@ def main(save_dir,distant_dir,walltime):
                 print("Running time limit achieves.")
                 sys.exit()
             #metrics
-            average_rew  = 0.0
+            total_rew  = 0.0
             average_q = 0.0
 
             s0 = env.reset()
@@ -262,7 +264,7 @@ def main(save_dir,distant_dir,walltime):
                     else:
                         action = max_action
                 obs,rew,done,_ = env.step(action)
-                average_rew += rew
+                total_rew += rew
                 sequence.append(obs)
                 last_obs_input  = obs_input
                 obs_input = preprocess_obs(sequence[step:step+rl_conf.num_recent_obs])
@@ -271,13 +273,53 @@ def main(save_dir,distant_dir,walltime):
                     with open(q_file,"a+") as out:
                         out.write(str(average_q*4/step)+"\n")
                     with open(reward_file,"a+") as out:
-                        out.write(str(average_rew/step)+"\n")
+                        out.write(str(total_rew)+"\n")
                     break
             if episode%rl_conf.episodes_to_save == 0:
                 saver.save(sess,checkpoint)
                 save_file_to_distant_dir = """cp {} {}""".format(q_file,os.path.join(distant_dir,"q_values.txt"))
                 subprocess.call(save_file_to_distant_dir,shell=True)
             print("Time taken to complete this episode: {}s.".format(time.time()-start))
+            
+            #Evaluate the performance of the agent with total rewards
+            if update_q1_steps%rl_conf.steps_to_validate == 0:
+                total_rew_eval = []
+                epsilon = 0.05
+                first_actions = {}
+                for _ in np.arange(rl_conf.evaluation_trials):
+                    s0 = env.reset()
+                    zero_pad = np.zeros(s0.shape)
+                    if rl_conf.num_recent_obs == 1:
+                        sequence = []
+                    else:
+                        sequence = [zero_pad]*(rl_conf.num_recent_obs-1)
+                    sequence.append(s0)
+
+                    rew_eval = 0
+                    for step in np.arange(1,rl_conf.max_steps):
+                        if step%rl_conf.action_repeat == 1:
+                            #calculate q1 and get optimal action
+                            if step == 1:
+                                obs_input = preprocess_obs(sequence[:rl_conf.num_recent_obs])
+                            q_values = sess.run(q,feed_dict={obs_ph:np.array([obs_input])})
+                            max_action = np.argmax(q_values,axis=-1)
+                            #epsilon greedy algo
+                            dice = np.random.uniform()
+                            if dice < epsilon:
+                                action = np.random.randint(num_actions)
+                            else:
+                                action = max_action
+                        obs,rew,done,_ = env.step(action)
+                        rew_eval += rew
+                        sequence.append(obs)
+                        last_obs_input  = obs_input
+                        obs_input = preprocess_obs(sequence[step:step+rl_conf.num_recent_obs])
+                        if done:
+                            total_rew_eval.append(rew_eval)
+                            break
+                print("Evaluating the agent at step-{}:".format(update_q1_steps))
+                total_rew_eval = np.array(total_rew_eval)
+                print("Total rewards of trials have average-{}, std-{}.".format(np.mean(total_rew_eval),np.std(total_rew_eval)))
 
     
 
