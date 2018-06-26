@@ -292,7 +292,7 @@ def main(save_dir,distant_dir,walltime):
                     break
             if episode%rl_conf.episodes_to_save == 0:
                 saver.save(sess,checkpoint)
-                save_file_to_distant_dir = """cp ./* {}""".format(distant_dir)
+                save_file_to_distant_dir = """cp {} {}""".format(os.path.join(save_dir,"*"),distant_dir)
                 subprocess.call(save_file_to_distant_dir,shell=True)
             print("Time taken to complete this episode: {}s.".format(time.time()-start))
             
