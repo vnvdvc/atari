@@ -248,7 +248,7 @@ def main(save_dir,distant_dir,walltime):
                     variable_values_q1 = sess.run(variable_set)
                     var_feed_dict_list_q1 = [(key,val) for key,val in zip(variable_set,variable_values_q1)]
                 update_q1_steps += 1
-                #dqn from deepmind 2015 Nature paper
+                #double dqn
                 samples = rl_model.sample_from_replay()
                 obs_samples = np.array([sample[0] for sample in samples])
                 obs_next_samples = np.array([sample[3] for sample in samples])
@@ -256,8 +256,12 @@ def main(save_dir,distant_dir,walltime):
                 done_samples = np.array([sample[4] for sample in samples]).reshape((rl_conf.batch,1))
                 indexed_action_samples = np.array([[idx,sample[1]] for idx,sample in enumerate(samples)])
 
+                q_for_selecting_actions = sess.run(q,feed_dict={obs_ph:obs_samples})
+                selected_actions = np.argmax(q_for_selecting_actions,axis=-1)
+                indexed_selected_actions = np.array([[idx,action] for idx,action in enumerate(selected_actions)])
+
                 q_targets = sess.run(q,feed_dict=dict([(obs_ph,obs_next_samples)]+var_feed_dict_list_q1))
-                labels = np.where(done_samples,rew_samples,rew_samples+rl_conf.gamma*np.amax(q_targets,axis=-1,keepdims=True))
+                labels = np.where(done_samples,rew_samples,rew_samples+rl_conf.gamma*q_targets[indexed_selected_actions].reshape((rl_conf.batch,1)))
                 sess.run(train_op,feed_dict={obs_ph:obs_samples,y_ph:labels,indexed_action_ph:indexed_action_samples})
                 
                 #update replay
