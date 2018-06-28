@@ -12,8 +12,8 @@ class RL_config(object):
     shape_of_frame = (84,84)
     gamma = 0.99
     learning_rate = 0.0000625
-    replay_capacity = 10000
-    replay_start_size = 5000
+    replay_capacity = 1000000
+    replay_start_size = 50000
     num_recent_obs = 4
     action_repeat = 4
     steps_for_updating_q1 = 10000
@@ -22,7 +22,7 @@ class RL_config(object):
     max_steps = 2000
     final_exploration_episodes = 5000
     episodes_to_save = 1000
-    steps_to_validate = 250000
+    episodes_to_validate = 2000
     evaluation_trials = 30
     alpha_prioritized_replay = 0.6
     beta_prioritized_replay = 0.4
@@ -187,7 +187,7 @@ def main(save_dir,distant_dir,walltime):
             obs_next_samples = np.array([sample[3] for sample in samples])
             rew_samples = np.array([sample[2] for sample in samples]).reshape((sample_size,1))
             done_samples = np.array([sample[4] for sample in samples]).reshape((sample_size,1))
-            action_samples = np.array([sample[1] for sample in samples])
+            action_samples = np.array([sample[1] for sample in samples]).astype(int)
 
             q_targets = sess.run(q,feed_dict={obs_ph:obs_next_samples})
 
@@ -234,17 +234,20 @@ def main(save_dir,distant_dir,walltime):
                 if update_q1_steps % rl_conf.steps_for_updating_q1 == 0:
                     variable_values_q1 = sess.run(variable_set)
                     var_feed_dict_list_q1 = [(key,val) for key,val in zip(variable_set,variable_values_q1)]
-                update_q1_steps += 1
                 #whether to recompute priority list
                 if len(rl_model.replay) >= rl_conf.replay_capacity and update_q1_steps%rl_model.frequency_to_update_priorities_globally == 0:  
                     rl_model.compute_priority_list(rl_model.priority_list)
+                if len(rl_model.replay) >= rl_conf.replay_capacity and rl_model.group_rbs == []:
+                    rl_model.compute_priority_list(rl_model.priority_list)
+                update_q1_steps += 1
                 #double dqn
                 samples,sample_p_idxes = rl_model.sample_from_replay()
                 obs_samples = np.array([sample[0] for sample in samples])
                 obs_next_samples = np.array([sample[3] for sample in samples])
                 rew_samples = np.array([sample[2] for sample in samples]).reshape((rl_conf.batch,1))
                 done_samples = np.array([sample[4] for sample in samples]).reshape((rl_conf.batch,1))
-                indexed_action_samples = np.array([[idx,sample[1]] for idx,sample in enumerate(samples)])
+                action_samples = np.array([sample[1] for sample in samples]).astype(int)
+                indexed_action_samples = np.array([[idx,sample[1]] for idx,sample in enumerate(samples)]).astype(int)
 
                 q_for_selecting_actions = sess.run(q,feed_dict={obs_ph:obs_next_samples})
                 selected_actions = np.argmax(q_for_selecting_actions,axis=-1)
@@ -257,7 +260,7 @@ def main(save_dir,distant_dir,walltime):
 
                 #update priorities for replay
                 if sample_p_idxes is not None:
-                    priorities = (labels - q_for_priorities[np.arange(len(action_samples)),action_samples].reshape((rl_conf.batch,1)))**(rl_conf.alpha_prioritized_replay)
+                    priorities = np.absolute(labels - q_for_priorities[np.arange(len(action_samples)),action_samples].reshape((rl_conf.batch,1)))**(rl_conf.alpha_prioritized_replay)
                     p_indexed_priorities = np.concatenate((sample_p_idxes.reshape((rl_conf.batch,1)),priorities),axis=1)
                     rl_model.update_priority_after_sampling(p_indexed_priorities)
                     weights = (len(rl_model.replay)*priorities)**(-beta_prioritized_replay)
@@ -312,7 +315,7 @@ def main(save_dir,distant_dir,walltime):
             print("Time taken to complete this episode: {}s.".format(time.time()-start))
             
             #Evaluate the performance of the agent with total rewards
-            if update_q1_steps%rl_conf.steps_to_validate == 0:
+            if episode%rl_conf.episodes_to_validate == 0:
                 total_rew_eval = []
                 epsilon = 0.05
                 first_actions = {}
@@ -347,7 +350,7 @@ def main(save_dir,distant_dir,walltime):
                         if done:
                             total_rew_eval.append(rew_eval)
                             break
-                print("Evaluating the agent at step-{}:".format(update_q1_steps))
+                print("Evaluating the agent at episode-{}:".format(episode))
                 total_rew_eval = np.array(total_rew_eval)
                 print("Total rewards of trials have max-{}, average-{}, std-{}.".format(np.amax(total_rew_eval),\
                         np.mean(total_rew_eval),np.std(total_rew_eval)))

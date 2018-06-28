@@ -20,8 +20,8 @@ class RL_config(object):
     max_episodes = 10000
     max_steps = 2000
     final_exploration_episodes = 2000
-    episodes_to_save = 100
-    steps_to_validate = 250000
+    episodes_to_save = 1000
+    episodes_to_validate = 2000
     evaluation_trials = 30
 
 class RL_model(object):
@@ -203,9 +203,12 @@ def main(save_dir,distant_dir,walltime):
         if tf.train.checkpoint_exists(checkpoint):
             saver.restore(sess,checkpoint)
             print("Restore model from checkpoint.")
+            restart = True
         else:
             sess.run(tf.global_variables_initializer())
             print("Files saved to {}".format(save_dir))
+            restart = False
+            sys.exit()
         #Save model state
         print("Save model to save_dir:")
         inputs_dict = {
@@ -216,7 +219,8 @@ def main(save_dir,distant_dir,walltime):
         outputs_dict = {
                 "preds": preds
                 }
-        simple_save(sess,os.path.join(save_dir,"model"),inputs_dict,outputs_dict)
+        model_dir = os.path.join(save_dir,"model")
+        simple_save(sess,model_dir,inputs_dict,outputs_dict)
 
         q_file = os.path.join(save_dir,"q_values.txt")
         reward_file = os.path.join(save_dir,"rewards.txt")
@@ -241,7 +245,10 @@ def main(save_dir,distant_dir,walltime):
                 sequence = [zero_pad]*(rl_conf.num_recent_obs-1)
             sequence.append(s0)
             #epsilon schedule
-            epsilon = max(1.0-float(episode)/rl_conf.final_exploration_episodes,0.1)
+            if restart:
+                epsilon = 0.1
+            else:
+                epsilon = max(1.0-float(episode)/rl_conf.final_exploration_episodes,0.1)
             for step in np.arange(1,rl_conf.max_steps):
                 #whether to update variables of q1
                 if update_q1_steps % rl_conf.steps_for_updating_q1 == 0:
@@ -282,7 +289,7 @@ def main(save_dir,distant_dir,walltime):
                 rl_model.update_replay(np.array([(last_obs_input,action,rew,obs_input,done)]))
                 if done:
                     with open(q_file,"a+") as out:
-                        out.write(str(average_q*4/step)+"\n")
+                        out.write(str(average_q[0]*4/step)+"\n")
                     with open(reward_file,"a+") as out:
                         out.write(str(total_rew)+"\n")
                     break
@@ -292,7 +299,7 @@ def main(save_dir,distant_dir,walltime):
                 subprocess.call(save_file_to_distant_dir,shell=True)
             
             #Evaluate the performance of the agent with total rewards
-            if update_q1_steps%rl_conf.steps_to_validate == 0:
+            if episode%rl_conf.episodes_to_validate == 0:
                 total_rew_eval = []
                 epsilon = 0.05
                 first_actions = {}
@@ -327,7 +334,7 @@ def main(save_dir,distant_dir,walltime):
                         if done:
                             total_rew_eval.append(rew_eval)
                             break
-                print("Evaluating the agent at step-{}:".format(update_q1_steps))
+                print("Evaluating the agent at episode-{}:".format(episode))
                 total_rew_eval = np.array(total_rew_eval)
                 print("Total rewards of trials have max-{}, average-{}, std-{}.".format(np.amax(total_rew_eval),\
                         np.mean(total_rew_eval),np.std(total_rew_eval)))

@@ -158,6 +158,8 @@ class Prioritized_replay(RL_replay):
         self.env = env
         self.config = config
         self.frequency_to_update_priorities_globally = self.config.replay_capacity*0.25
+        self.group_rbs = []
+        self.ptotal = sys.maxsize
 
     def initialize_priority_list(self,priorities):
         priority_list = []
@@ -171,7 +173,7 @@ class Prioritized_replay(RL_replay):
     def compute_priority_list(self,priority_list):
         batch = self.config.batch
         priority_list = np.array(priority_list)
-        priority_list.sort(key=lambda x: x[1])
+        priority_list = np.array(sorted(priority_list,key=lambda x: x[1]))
         ptotal = np.sum(priority_list[:,1])
         edges = [ptotal/batch*i for i in range(1,batch)]
         group_rbs = []
@@ -209,6 +211,7 @@ class Prioritized_replay(RL_replay):
             new_list = np.stack((np.arange(old_size,new_size),np.array(priorities)),axis=1)
             self.priority_list = np.concatenate([self.priority_list,new_list])
         else:
+            print("Size of replay is {}".format(old_size))
             batch = self.config.batch
             edges = [self.ptotal/batch*i for i in range(1,batch)]
             group_idxes = []
@@ -223,9 +226,9 @@ class Prioritized_replay(RL_replay):
                 lb = 0; rb = len(edges)-1
                 while (rb-lb)>1:
                     medium = lb+int((rb-lb)/2)
-                    if priority < edges[medium][1]:
+                    if priority < edges[medium]:
                         rb = medium
-                    elif priority > edges[medium][1]:
+                    elif priority > edges[medium]:
                         lb = medium
                     else:
                         rb = medium+1
@@ -262,7 +265,7 @@ class Prioritized_replay(RL_replay):
                             break
                     target_idx = lb_idx+lb
                 #Replace old experience with new one
-                self.replay[self.priority_list[target_idx][0]] = new_samples[sample_idx]
+                self.replay[int(self.priority_list[target_idx][0])] = new_samples[sample_idx]
                 self.priority_list[target_idx][1] = priorities[sample_idx]
 
     #if size of replay is smaller than replay_capacity, random sampling will be used.
@@ -272,21 +275,33 @@ class Prioritized_replay(RL_replay):
             idxes = np.random.randint(len(self.replay),size=self.config.batch)
             return self.replay[idxes],None
         else:
+            print("Size of replay is {}".format(len(self.replay)))
             samples = []
-            sample_p_idxes = []
+            sample_p_idxes = set()
             lb = 0
-            for rb in self.group_rbs+[len(self.replay)-1]:
+            group_rbs = list(self.group_rbs)
+            group_rbs.append(len(self.replay)-1)
+            for rb in group_rbs:
                 if rb == lb:
                     p_list_idx = lb
                 else:
                     p_list_idx = np.random.randint(lb,high=rb)
-                samples.append(self.replay[self.priority_list[p_list_idx][0]])
-                sample_p_idxes.append(p_list_idx)
+                if p_list_idx >= self.config.replay_capacity:
+                    print("p_list_idx exceeds limit: {}".format(p_list_idx))
+                    print("lb={},rb={}".format(lb,rb))
+                temp_p = p_list_idx
+                while temp_p in sample_p_idxes or temp_p >= self.config.replay_capacity: 
+                    if temp_p >= self.config.replay_capacity:
+                        print("temp_p exceeds limit: {}".format(temp_p))
+                    temp_p = np.random.randint(0,high=self.config.replay_capacity)
+                sample_p_idxes.add(temp_p)
                 lb = rb
+            sample_p_idxes = np.array(list(sample_p_idxes))
+            samples = self.replay[self.priority_list[sample_p_idxes,0].astype(int)]
             return np.array(samples),np.array(sample_p_idxes)
 
     def update_priority_after_sampling(self,p_indexed_priorities):
-        self.priority_list[p_indexed_priorities[:,0]][1] = p_indexed_priorities[:,1]
+        self.priority_list[p_indexed_priorities[:,0].astype(int),1] = p_indexed_priorities[:,1]
 
             
 
